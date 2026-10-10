@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Tenant {
+  id                     String   @id @default(cuid())
+  name                   String
+  slug                   String   @unique
+  timezone               String   @default("America/New_York")
+  ownerNotificationEmail String
+  status                 String   @default("active") // active | paused | trial
+  createdAt              DateTime @default(now())
+
+  phoneNumbers  PhoneNumber[]
+  callers       Caller[]
+  interactions  Interaction[]
+  messages      Message[]
+  templates     Template[]
+  businessHours BusinessHour[]
+  loginTokens   LoginToken[]
+}
+
+model PhoneNumber {
+  id               String  @id @default(cuid())
+  tenantId         String
+  tenant           Tenant  @relation(fields: [tenantId], references: [id])
+  twilioSid        String
+  phoneNumber      String  @unique // E.164, matches the "To" webhook field
+  forwardingNumber String // owner's real cell, E.164
+  isActive         Boolean @default(true)
+
+  @@index([tenantId])
+}
+
+model Caller {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  phoneNumber   String
+  name          String?
+  status        String   @default("new") // new | notified | converted | closed
+  firstSeenAt   DateTime @default(now())
+  lastContactAt DateTime @default(now())
+
+  interactions Interaction[]
+  messages     Message[]
+
+  @@unique([tenantId, phoneNumber])
+}
+
+model Interaction {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  phoneNumberId String
+  callerId      String?
+  caller        Caller?   @relation(fields: [callerId], references: [id])
+  twilioCallSid String    @unique
+  fromNumber    String? // the caller's number as Twilio reported it, E.164
+  status        String // ringing | answered | missed
+  startedAt     DateTime
+  endedAt       DateTime?
+
+  messages Message[]
+
+  @@index([tenantId])
+  @@index([callerId])
+}
+
+model Message {
+  id                String       @id @default(cuid())
+  tenantId          String
+  tenant            Tenant       @relation(fields: [tenantId], references: [id])
+  callerId          String?
+  caller            Caller?      @relation(fields: [callerId], references: [id])
+  interactionId     String?
+  interaction       Interaction? @relation(fields: [interactionId], references: [id])
+  channel           String // 'email' now; 'sms' reserved for future
+  direction         String // outbound | inbound
+  providerMessageId String? // Resend id
+  status            String // queued | sent | delivered | failed
+  subject           String?
+  body              String
+  createdAt         DateTime     @default(now())
+
+  @@index([tenantId])
+  @@index([callerId])
+}
+
+model Template {
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id])
+  channel     String // 'email'
+  triggerType String // missed_call | missed_call_after_hours
+  subject     String?
+  body        String
+  isActive    Boolean @default(true)
+
+  @@index([tenantId, channel, triggerType])
+}
+
+model BusinessHour {
+  id        String  @id @default(cuid())
+  tenantId  String
+  tenant    Tenant  @relation(fields: [tenantId], references: [id])
+  dayOfWeek Int // 0-6, 0 = Sunday
+  openTime  String? // "09:00"
+  closeTime String? // "17:00"
+  isClosed  Boolean @default(false)
+
+  @@unique([tenantId, dayOfWeek])
+}
+
+model LoginToken {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  token     String    @unique // SHA-256 hash of the emailed token, never the raw value
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([tenantId])
+}
